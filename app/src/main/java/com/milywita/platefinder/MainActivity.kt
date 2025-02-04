@@ -1,47 +1,67 @@
 package com.milywita.platefinder
 
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import com.milywita.platefinder.ui.camera.CameraScreen
+import com.milywita.platefinder.ui.camera.ImagePreviewScreen
 import com.milywita.platefinder.ui.theme.PlateFinderTheme
+
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         setContent {
             PlateFinderTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    var capturedImage by remember { mutableStateOf<File?>(null) }
+
+                    if (capturedImage != null) {
+                        ImagePreviewScreen(
+                            imageFile = capturedImage!!,
+                            onRetakePhoto = { capturedImage = null },
+                            onPhotoAccepted = { file ->
+                                // Here we'll later add the AI processing
+                                Log.d("MainActivity", "Processing image: ${file.absolutePath}")
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Processing image...",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                    } else {
+                        CameraScreen(
+                            onImageCaptured = { file ->
+                                Log.d("MainActivity", "Image captured: ${file.absolutePath}")
+                                capturedImage = file
+                            },
+                            onError = { error ->
+                                Log.e("MainActivity", "Camera error: $error")
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Error: $error",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    PlateFinderTheme {
-        Greeting("Android")
     }
 }
