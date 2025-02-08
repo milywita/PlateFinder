@@ -1,18 +1,13 @@
-// CameraScreen.kt
 package com.milywita.platefinder.ui.camera
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Environment
 import android.util.Log
+import android.view.Surface
+import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
@@ -26,21 +21,21 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.suspendCancellableCoroutine
+import getCameraProvider
+import getOutputDirectory
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Locale
 import java.util.concurrent.Executor
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.launch
 
 @Composable
 fun CameraScreen(
     onImageCaptured: (File) -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
+    onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -64,148 +59,153 @@ fun CameraScreen(
     }
 
     if (hasCameraPermission) {
-        CameraPreview(
-            onImageCaptured = onImageCaptured,
-            onError = onError
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            var previewView by remember { mutableStateOf<PreviewView?>(null) }
+            var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+            var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+
+            DisposableEffect(Unit) {
+                onDispose {
+                    try {
+                        cameraProvider?.unbindAll()
+                    } catch (e: Exception) {
+                        Log.e("CameraScreen", "Error unbinding camera uses cases", e)
+                    }
+                }
+            }
+
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        this.scaleType = PreviewView.ScaleType.FILL_START
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        previewView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            LaunchedEffect(previewView) {
+                previewView?.let { view ->
+                    scope.launch {
+                        try {
+                            val provider = context.getCameraProvider()
+                            cameraProvider = provider
+
+                            // Force portrait mode by setting rotation to 0
+                            val preview = Preview.Builder()
+                                .setTargetRotation(Surface.ROTATION_0)
+                                .build()
+                                .also {
+                                    it.setSurfaceProvider(view.surfaceProvider)
+                                }
+
+                            imageCapture = ImageCapture.Builder()
+                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                                .setTargetRotation(Surface.ROTATION_0)
+                                .build()
+
+                            val cameraSelector = CameraSelector.Builder()
+                                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                                .build()
+
+                            try {
+                                provider.unbindAll()
+                                provider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    cameraSelector,
+                                    preview,
+                                    imageCapture
+                                )
+                            } catch (exc: Exception) {
+                                Log.e("CameraScreen", "Use case binding failed", exc)
+                                onError("Failed to bind camera: ${exc.message}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CameraScreen", "Camera setup failed", e)
+                            onError(e.localizedMessage ?: "Failed to set up camera")
+                        }
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Button(
+                    onClick = {
+                        takePhoto(
+                            imageCapture = imageCapture,
+                            outputDirectory = getOutputDirectory(context),
+                            executor = ContextCompat.getMainExecutor(context),
+                            onImageCaptured = onImageCaptured,
+                            onError = onError
+                        )
+                    }
+                ) {
+                    Text("Take Photo")
+                }
+            }
+
+            Button(
+                onClick = onGoBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+            ) {
+                Text("Go Back")
+            }
+        }
     } else {
-        // Display fallback UI if permission is not granted
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("Camera permission not granted")
         }
     }
 }
 
-@Composable
-private fun CameraPreview(
-    onImageCaptured: (File) -> Unit,
-    onError: (String) -> Unit
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    // Declare the capturing state here
-    var isCapturing by remember { mutableStateOf(false) }
-
-    val preview = remember { Preview.Builder().build() }
-    val previewView = remember { PreviewView(context) }
-    val imageCapture = remember { ImageCapture.Builder().build() }
-    val cameraSelector = remember { CameraSelector.DEFAULT_BACK_CAMERA }
-
-    // Create output directory
-    val outputDirectory = remember { getOutputDirectory(context) }
-    val executor = remember { ContextCompat.getMainExecutor(context) }
-
-    LaunchedEffect(previewView) {
-        val cameraProvider = context.getCameraProvider()
-        try {
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                cameraSelector,
-                preview,
-                imageCapture
-            )
-            preview.setSurfaceProvider(previewView.surfaceProvider)
-        } catch (exc: Exception) {
-            onError(exc.message ?: "Error setting up camera")
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { previewView },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        Button(
-            onClick = {
-                // Prevent multiple clicks while a capture is in progress
-                if (!isCapturing) {
-                    takePhoto(
-                        imageCapture = imageCapture,
-                        outputDirectory = outputDirectory,
-                        executor = executor,
-                        onImageCaptured = onImageCaptured,
-                        onError = onError,
-                        onCapturingChanged = { isCapturing = it }
-                    )
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
-        ) {
-            Text(if (isCapturing) "Capturing..." else "Take Photo")
-        }
-    }
-}
-
-private fun getOutputDirectory(context: Context): File {
-    val mediaDir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "PlateFinderPhotos").apply {
-            mkdirs()
-        }
-    } else {
-        File(context.getExternalFilesDir(null), "PlateFinderPhotos").apply {
-            mkdirs()
-        }
-    }
-    return if (mediaDir.exists()) mediaDir else context.filesDir
-}
-
-
-private suspend fun Context.getCameraProvider(): ProcessCameraProvider {
-    return suspendCancellableCoroutine { continuation ->
-        val future = ProcessCameraProvider.getInstance(this)
-        future.addListener({
-            try {
-                val provider = future[1, TimeUnit.SECONDS]
-                continuation.resume(provider)
-            } catch (e: Exception) {
-                continuation.resumeWithException(e)
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-}
-
-
-
 private fun takePhoto(
-    filenameFormat: String = "yyyy-MM-dd-HH-mm-ss-SSS",
-    imageCapture: ImageCapture,
+    imageCapture: ImageCapture?,
     outputDirectory: File,
     executor: Executor,
     onImageCaptured: (File) -> Unit,
-    onError: (String) -> Unit,
-    onCapturingChanged: (Boolean) -> Unit // Callback to update capturing state
+    onError: (String) -> Unit
 ) {
-    // Set capturing state to true before taking the photo
-    onCapturingChanged(true)
+    imageCapture?.let { capture ->
+        val photoFile = File(
+            outputDirectory,
+            "IMG_${System.currentTimeMillis()}.jpg"
+        )
 
-    val photoFile = File(
-        outputDirectory,
-        SimpleDateFormat(filenameFormat, Locale.US)
-            .format(System.currentTimeMillis()) + ".jpg"
-    )
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
-    val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+        try {
+            capture.takePicture(
+                outputOptions,
+                executor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        onImageCaptured(photoFile)
+                    }
 
-    imageCapture.takePicture(
-        outputOptions,
-        executor,
-        object : ImageCapture.OnImageSavedCallback {
-            override fun onError(exc: ImageCaptureException) {
-                onCapturingChanged(false)
-                Log.e("CameraScreen", "Photo capture failed: ${exc.message}", exc)
-                onError(exc.message ?: "Photo capture failed")
-            }
-
-            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                onCapturingChanged(false)
-                Log.d("CameraScreen", "Photo capture succeeded: ${photoFile.absolutePath}")
-                onImageCaptured(photoFile)
-            }
+                    override fun onError(exc: ImageCaptureException) {
+                        Log.e("CameraScreen", "Photo capture failed", exc)
+                        onError("Failed to capture photo: ${exc.message}")
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e("CameraScreen", "Taking photo failed", e)
+            onError("Failed to take photo: ${e.message}")
         }
-    )
+    } ?: onError("Camera not initialized")
 }

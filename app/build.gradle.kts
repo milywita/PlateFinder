@@ -21,11 +21,16 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"${project.properties["GEMINI_API_KEY"] ?: ""}\"")
+
+
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -41,6 +46,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -67,12 +73,17 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.view)
 
-    // Retrofit
+    // Google AI (Gemini)
+    implementation(libs.generativeai)
+    implementation(libs.google.ai.generativeai)
+
+    // Retrofit (you can keep these if you plan to use other APIs)
     implementation(libs.retrofit.core)
     implementation(libs.retrofit.converter.gson)
 
     // OkHttp
     implementation(libs.okhttp.logging)
+    implementation(libs.androidx.exifinterface)
 
     // Testing
     testImplementation(libs.junit)
