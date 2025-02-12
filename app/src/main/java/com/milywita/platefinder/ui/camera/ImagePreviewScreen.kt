@@ -7,11 +7,21 @@ import android.media.ExifInterface
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,7 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
-import androidx.compose.material.icons.filled.Add
+import com.milywita.platefinder.data.RecipeRepository
 
 @Composable
 fun ImagePreviewScreen(
@@ -47,9 +57,10 @@ fun ImagePreviewScreen(
     isProcessing: Boolean,
     onRetakePhoto: () -> Unit,
     onAnalyzePhoto: (File) -> Unit,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    recipeRepository: RecipeRepository
 ) {
-    val clipboardManager = LocalClipboardManager.current
+    LocalClipboardManager.current
     val context = LocalContext.current
 
     Column(
@@ -87,7 +98,7 @@ fun ImagePreviewScreen(
                 .weight(1f)
                 .padding(bottom = 16.dp)
                 .shadow(8.dp, RoundedCornerShape(16.dp)),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(16.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -114,7 +125,7 @@ fun ImagePreviewScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .shadow(8.dp, RoundedCornerShape(16.dp)),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(16.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -145,39 +156,59 @@ fun ImagePreviewScreen(
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                         ) {
+                            // Header Row with title, copy & save buttons
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "Recipe Analysis",
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.Bold
-                                    )
+                                    ),
+                                    modifier = Modifier.weight(1f)
                                 )
-                                IconButton(
-                                    onClick = {
-                                        clipboardManager.setText(AnnotatedString(aiResponse))
-                                        Toast.makeText(
-                                            context,
-                                            "Recipe copied to clipboard",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                // Row for both copy and save buttons
+                                Row {
+                                    IconButton(
+                                        onClick = {
+                                            // Get title from the first line after "# "
+                                            val title = aiResponse.lines()
+                                                .firstOrNull { it.startsWith("# ") }
+                                                ?.substringAfter("# ")
+                                                ?: "Untitled Recipe"
+
+                                            // Get difficulty from the Additional Information section
+                                            val difficulty = aiResponse.substringAfter("**Difficulty:**", "")
+                                                .substringBefore("\n", "Medium")
+                                                .trim()
+
+                                            recipeRepository.saveRecipe(
+                                                title = title,
+                                                content = aiResponse,
+                                                difficulty = difficulty
+                                            )
+
+                                            Toast.makeText(
+                                                context,
+                                                "Recipe saved!",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Save recipe",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
                                     }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "Copy recipe",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
                                 }
                             }
-
+                            // Display the recipe details parsed from markdown
                             Text(
-                                text = parseMarkdownText(aiResponse),
+                                text = parseMarkdownText(aiResponse).toString(),
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -200,7 +231,7 @@ fun ImagePreviewScreen(
             }
         }
 
-        // Buttons Row
+        // Buttons Row for Retake and Analyze Image
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -219,7 +250,6 @@ fun ImagePreviewScreen(
             ) {
                 Text("Retake")
             }
-
             Button(
                 onClick = { onAnalyzePhoto(imageFile) },
                 enabled = !isProcessing,
@@ -239,36 +269,28 @@ fun ImagePreviewScreen(
 @Composable
 fun parseMarkdownText(text: String): AnnotatedString {
     return buildAnnotatedString {
-        // Split the text into lines to handle headings
+        // Split text line by line to handle headings and bold text
         val lines = text.split("\n")
-
         lines.forEach { line ->
             when {
                 // Handle h1 (# heading)
                 line.trimStart().startsWith("# ") -> {
-                    pushStyle(SpanStyle(
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                    ))
+                    pushStyle(SpanStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold))
                     append(line.substringAfter("# "))
                     pop()
                     append("\n")
                 }
                 // Handle h2 (## heading)
                 line.trimStart().startsWith("## ") -> {
-                    pushStyle(SpanStyle(
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                    ))
+                    pushStyle(SpanStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold))
                     append(line.substringAfter("## "))
                     pop()
                     append("\n")
                 }
-                // Handle regular text with bold markers (**)
                 else -> {
+                    // Process bold markers (**)
                     val segments = line.split("**")
                     var isBold = false
-
                     segments.forEach { segment ->
                         if (isBold) {
                             pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
@@ -286,7 +308,6 @@ fun parseMarkdownText(text: String): AnnotatedString {
     }
 }
 
-
 private fun loadAndRotateImage(imageFile: File): Bitmap? {
     return try {
         // Read EXIF orientation
@@ -295,44 +316,26 @@ private fun loadAndRotateImage(imageFile: File): Bitmap? {
             ExifInterface.TAG_ORIENTATION,
             ExifInterface.ORIENTATION_UNDEFINED
         )
-
-        val options = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
-        }
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(imageFile.absolutePath, options)
-
         val targetHeight = 1920
         val sampleSize = (options.outHeight.toFloat() / targetHeight).toInt()
-
         options.apply {
             inJustDecodeBounds = false
             inSampleSize = if (sampleSize > 1) sampleSize else 1
         }
         val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath, options)
-
         val matrix = Matrix()
         when (orientation) {
             ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
             ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
             ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
         }
-
         if (matrix.isIdentity) {
             bitmap
         } else {
-            Bitmap.createBitmap(
-                bitmap,
-                0,
-                0,
-                bitmap.width,
-                bitmap.height,
-                matrix,
-                true
-            ).also {
-                if (it != bitmap) {
-                    bitmap.recycle()
-                }
-            }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                .also { if (it != bitmap) bitmap.recycle() }
         }
     } catch (e: Exception) {
         e.printStackTrace()

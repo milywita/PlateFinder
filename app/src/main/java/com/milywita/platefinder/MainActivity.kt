@@ -16,29 +16,50 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.lifecycleScope
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
+import com.milywita.platefinder.data.Recipe
+import com.milywita.platefinder.data.RecipeRepository
 import com.milywita.platefinder.ui.MainScreen
+import com.milywita.platefinder.ui.SavedRecipesScreen
 import com.milywita.platefinder.ui.camera.CameraScreen
 import com.milywita.platefinder.ui.camera.ImagePreviewScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.util.Log
-import kotlinx.coroutines.delay
+import com.milywita.platefinder.ui.RecipeDetailScreen
+
+// Added new enum entry for RecipeDetail
+enum class Screen { Main, Camera, Preview, SavedRecipes, RecipeDetail }
 
 class MainActivity : ComponentActivity() {
+
     private var capturedImage: File? by mutableStateOf(null)
     private var currentScreen: Screen by mutableStateOf(Screen.Main)
     private var aiResponse: String by mutableStateOf("")
     private var isProcessing: Boolean by mutableStateOf(false)
+    private val isTestMode = false // false to API
+    private lateinit var recipeRepository: RecipeRepository
+    private val recipes = mutableStateOf(emptyList<Recipe>())
 
-    private val isTestMode = true // Set to false to use real API
+
+    private var selectedRecipe: Recipe? by mutableStateOf(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        recipeRepository = RecipeRepository(this)
+
+        lifecycleScope.launch {
+            recipeRepository.recipes.collect { recipeList ->
+                recipes.value = recipeList
+            }
+        }
+
         setContent {
             MaterialTheme {
                 Surface(
@@ -58,9 +79,9 @@ class MainActivity : ComponentActivity() {
                     when (currentScreen) {
                         Screen.Main -> MainScreen(
                             onCameraClick = { currentScreen = Screen.Camera },
-                            onGalleryClick = { galleryLauncher.launch("image/*") }
+                            onGalleryClick = { galleryLauncher.launch("image/*") },
+                            onSavedRecipesClick = { currentScreen = Screen.SavedRecipes }
                         )
-
                         Screen.Camera -> CameraScreen(
                             onImageCaptured = { file ->
                                 capturedImage = file
@@ -93,14 +114,44 @@ class MainActivity : ComponentActivity() {
                                         onSuccess = { response ->
                                             aiResponse = response
                                             isProcessing = false
-                                        }
+                                        },
+                                        onGoBack = {
+                                            currentScreen = Screen.Main
+                                            aiResponse = ""
+                                        },
+                                        recipeRepository = recipeRepository
                                     )
                                 },
                                 onGoBack = {
                                     currentScreen = Screen.Main
                                     aiResponse = ""
-                                }
+                                },
+                                recipeRepository = recipeRepository
                             )
+                        }
+                        Screen.SavedRecipes -> SavedRecipesScreen(
+                            recipes = recipes.value,
+                            onBackClick = { currentScreen = Screen.Main },
+                            onRecipeClick = { recipe ->
+                                selectedRecipe = recipe
+                                currentScreen = Screen.RecipeDetail
+                            },
+                            onDeleteRecipe = { recipe ->
+                                recipeRepository.deleteRecipe(recipe)
+                                Toast.makeText(
+                                    applicationContext,
+                                    "Recipe deleted",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                        Screen.RecipeDetail -> {
+                            selectedRecipe?.let { recipe ->
+                                RecipeDetailScreen(
+                                    recipe = recipe,
+                                    onBackClick = { currentScreen = Screen.SavedRecipes }
+                                )
+                            }
                         }
                     }
                 }
@@ -122,7 +173,6 @@ class MainActivity : ComponentActivity() {
     private fun getTestResponse(): String {
         return """
             # Homemade Pizza Margherita
-            
             ## Ingredients
             - 2 1/4 cups (280g) bread flour
             - 1 tsp instant yeast
@@ -133,7 +183,6 @@ class MainActivity : ComponentActivity() {
             - 8 oz (225g) fresh mozzarella
             - Fresh basil leaves
             - Extra virgin olive oil for drizzling
-            
             ## Instructions
             1. Mix flour, yeast, and salt in a large bowl
             2. Add water and oil, knead until smooth (about 10 minutes)
@@ -142,11 +191,10 @@ class MainActivity : ComponentActivity() {
             5. Roll out dough and add toppings
             6. Bake for 12-15 minutes until crust is golden
             7. Add fresh basil after baking
-            
             ## Additional Information
             **Cooking Time:** 1 hour 30 minutes
             **Difficulty:** Medium
-            **Tips:** 
+            **Tips:**
             - Let dough come to room temperature before shaping
             - Use high-quality ingredients for best results
             - For extra crispy crust, brush edges with olive oil
@@ -157,11 +205,12 @@ class MainActivity : ComponentActivity() {
         context: Context,
         file: File,
         onError: (String) -> Unit,
-        onSuccess: (String) -> Unit
+        onSuccess: (String) -> Unit,
+        onGoBack: () -> Unit,
+        recipeRepository: RecipeRepository
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             if (isTestMode) {
-                // Simulate network delay
                 delay(1500)
                 withContext(Dispatchers.Main) {
                     onSuccess(getTestResponse())
@@ -169,32 +218,24 @@ class MainActivity : ComponentActivity() {
                 return@launch
             }
 
-            // Original API implementation
             try {
                 Log.d(TAG, "Starting image analysis for file: ${file.absolutePath}")
-
                 val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                if (bitmap == null) {
-                    throw IllegalStateException("Failed to decode image file")
-                }
+                    ?: throw IllegalStateException("Failed to decode image file")
                 Log.d(TAG, "Successfully decoded bitmap: ${bitmap.width}x${bitmap.height}")
-
                 val generativeModel = GenerativeModel(
                     modelName = "gemini-1.5-flash",
                     apiKey = "X"
                 )
-                Log.d(TAG, "Created GenerativeModel instance")
-
                 val prompt = """
                     You are a professional chef and food recognition expert. Look at this image and:
                     1. Identify the main dish or food item in the image
                     2. Provide a detailed recipe for this dish including:
-                       - List of ingredients with measurements
-                       - Step-by-step cooking instructions
-                       - Estimated cooking time
-                       - Difficulty level (Easy/Medium/Hard)
+                    - List of ingredients with measurements
+                    - Step-by-step cooking instructions
+                    - Estimated cooking time
+                    - Difficulty level (Easy/Medium/Hard)
                     3. Add any cooking tips or variations that might be helpful
-                    
                     Format your response in clear sections using markdown:
                     # [Dish Name]
                     ## Ingredients
@@ -205,24 +246,17 @@ class MainActivity : ComponentActivity() {
                     [cooking time, difficulty, and tips]
                 """.trimIndent()
 
-                Log.d(TAG, "Creating input content with image and prompt")
                 val inputContent = content {
                     image(bitmap)
                     text(prompt)
                 }
 
-                Log.d(TAG, "Sending request to Gemini API")
                 val response = generativeModel.generateContent(inputContent)
-                Log.d(TAG, "Received response from Gemini API: $response")
-
                 withContext(Dispatchers.Main) {
                     if (response.text != null) {
-                        Log.d(TAG, "Successfully got response text: ${response.text}")
                         onSuccess(response.text!!)
                     } else {
-                        val errorMessage = "No response text generated"
-                        Log.e(TAG, errorMessage)
-                        onError(errorMessage)
+                        onError("No response text generated")
                     }
                 }
             } catch (e: Exception) {
@@ -239,5 +273,3 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
-enum class Screen { Main, Camera, Preview }

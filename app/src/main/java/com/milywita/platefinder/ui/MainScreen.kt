@@ -15,7 +15,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun MainScreen(
     onCameraClick: () -> Unit,
-    onGalleryClick: () -> Unit
+    onGalleryClick: () -> Unit,
+    onSavedRecipesClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -23,7 +24,6 @@ fun MainScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
-
     ) {
         Button(
             onClick = onCameraClick,
@@ -36,9 +36,18 @@ fun MainScreen(
 
         Button(
             onClick = onGalleryClick,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         ) {
             Text("Choose from Gallery")
+        }
+
+        Button(
+            onClick = onSavedRecipesClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("View Saved Recipes")
         }
     }
 }
