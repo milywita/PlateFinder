@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,7 +14,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
@@ -22,6 +25,7 @@ import com.google.ai.client.generativeai.type.content
 import com.milywita.platefinder.data.Recipe
 import com.milywita.platefinder.data.RecipeRepository
 import com.milywita.platefinder.ui.MainScreen
+import com.milywita.platefinder.ui.RecipeDetailScreen
 import com.milywita.platefinder.ui.SavedRecipesScreen
 import com.milywita.platefinder.ui.camera.CameraScreen
 import com.milywita.platefinder.ui.camera.ImagePreviewScreen
@@ -31,8 +35,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import android.util.Log
-import com.milywita.platefinder.ui.RecipeDetailScreen
 
 // Added new enum entry for RecipeDetail
 enum class Screen { Main, Camera, Preview, SavedRecipes, RecipeDetail }
@@ -225,26 +227,37 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Successfully decoded bitmap: ${bitmap.width}x${bitmap.height}")
                 val generativeModel = GenerativeModel(
                     modelName = "gemini-1.5-flash",
-                    apiKey = "X"
+                    apiKey = "x"
                 )
                 val prompt = """
-                    You are a professional chef and food recognition expert. Look at this image and:
-                    1. Identify the main dish or food item in the image
-                    2. Provide a detailed recipe for this dish including:
-                    - List of ingredients with measurements
-                    - Step-by-step cooking instructions
-                    - Estimated cooking time
-                    - Difficulty level (Easy/Medium/Hard)
-                    3. Add any cooking tips or variations that might be helpful
-                    Format your response in clear sections using markdown:
-                    # [Dish Name]
+                    You are a professional chef and food recognition expert. Analyze the image and provide a recipe using these guidelines:
+                
+                    1. For the ingredients section:
+                       - List main ingredients with exact measurements
+                       - Put basic seasonings (salt, pepper, common spices) at the end with "to taste"
+                       - Assume standard cooking oils are available
+                       - Format each ingredient as: "- [quantity] [unit] [ingredient name]"
+                    
+                    Example format:
+                    # [Recipe Name]
+                    
                     ## Ingredients
-                    [ingredients list]
+                    - 2 cups flour
+                    - 1 pound chicken breast
+                    - 3 large eggs
+                    - 2 cups heavy cream
+                    Basic seasonings (assumed available):
+                    - Salt and pepper to taste
+                    - Olive oil for cooking
+                    - Common spices as needed
+                    
                     ## Instructions
-                    [numbered steps]
-                    ## Additional Information
-                    [cooking time, difficulty, and tips]
-                """.trimIndent()
+                    [numbered steps...]
+                    
+                    ## Details
+                    - Cooking time: [duration]
+                    - Difficulty: [Easy/Medium/Hard]
+                    - Tips: [cooking tips]""".trimIndent()
 
                 val inputContent = content {
                     image(bitmap)
@@ -252,6 +265,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val response = generativeModel.generateContent(inputContent)
+                Log.d("AI_RESPONSE", "Received AI response: ${response.text}")
                 withContext(Dispatchers.Main) {
                     if (response.text != null) {
                         onSuccess(response.text!!)
@@ -260,6 +274,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
+                Log.e("AI_RESPONSE", "Error generating AI response", e)
                 Log.e(TAG, "Error during image analysis", e)
                 val errorMessage = when (e) {
                     is OutOfMemoryError -> "Image is too large to process"

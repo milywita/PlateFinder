@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,6 +24,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -31,14 +34,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -47,8 +54,42 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.io.File
+import com.milywita.platefinder.data.OrderRequest
 import com.milywita.platefinder.data.RecipeRepository
+import com.milywita.platefinder.utils.RecipeParser
+import java.io.File
+
+
+@Composable
+private fun DebugIngredientsDialog(
+    orderRequest: OrderRequest,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Parsed Ingredients") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text("Recipe ID: ${orderRequest.recipeId}")
+                Spacer(modifier = Modifier.height(8.dp))
+                orderRequest.ingredients.forEach { ingredient ->
+                    Text(
+                        text = "${ingredient.quantity} ${ingredient.unit} ${ingredient.name}",
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
 
 @Composable
 fun ImagePreviewScreen(
@@ -60,7 +101,9 @@ fun ImagePreviewScreen(
     onGoBack: () -> Unit,
     recipeRepository: RecipeRepository
 ) {
-    LocalClipboardManager.current
+    var showDebugDialog by remember { mutableStateOf(false) }
+    var currentOrderRequest by remember { mutableStateOf<OrderRequest?>(null) }
+    val recipeParser = remember { RecipeParser() }
     val context = LocalContext.current
 
     Column(
@@ -69,7 +112,6 @@ fun ImagePreviewScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Back Button Row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -91,7 +133,6 @@ fun ImagePreviewScreen(
             }
         }
 
-        // Image Preview Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -119,7 +160,6 @@ fun ImagePreviewScreen(
             }
         }
 
-        // AI Response Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -156,7 +196,6 @@ fun ImagePreviewScreen(
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                         ) {
-                            // Header Row with title, copy & save buttons
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -170,27 +209,30 @@ fun ImagePreviewScreen(
                                     ),
                                     modifier = Modifier.weight(1f)
                                 )
-                                // Row for both copy and save buttons
                                 Row {
                                     IconButton(
                                         onClick = {
-                                            // Get title from the first line after "# "
-                                            val title = aiResponse.lines()
-                                                .firstOrNull { it.startsWith("# ") }
-                                                ?.substringAfter("# ")
-                                                ?: "Untitled Recipe"
+                                            currentOrderRequest = recipeParser.extractIngredientsForOrder(aiResponse)
+                                            Log.d("Ingredients", "Parsed ingredients: ${currentOrderRequest?.ingredients}")
+                                            showDebugDialog = true
+                                        },
+                                        enabled = aiResponse.isNotEmpty()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ShoppingCart,
+                                            contentDescription = "Test ingredient parsing",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
 
-                                            // Get difficulty from the Additional Information section
-                                            val difficulty = aiResponse.substringAfter("**Difficulty:**", "")
-                                                .substringBefore("\n", "Medium")
-                                                .trim()
-
+                                    IconButton(
+                                        onClick = {
+                                            val recipe = recipeParser.parseMarkdownToRecipe(aiResponse)
                                             recipeRepository.saveRecipe(
-                                                title = title,
+                                                title = recipe.title,
                                                 content = aiResponse,
-                                                difficulty = difficulty
+                                                difficulty = recipe.difficulty
                                             )
-
                                             Toast.makeText(
                                                 context,
                                                 "Recipe saved!",
@@ -206,7 +248,6 @@ fun ImagePreviewScreen(
                                     }
                                 }
                             }
-                            // Display the recipe details parsed from markdown
                             Text(
                                 text = parseMarkdownText(aiResponse).toString(),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -231,7 +272,6 @@ fun ImagePreviewScreen(
             }
         }
 
-        // Buttons Row for Retake and Analyze Image
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -250,6 +290,7 @@ fun ImagePreviewScreen(
             ) {
                 Text("Retake")
             }
+
             Button(
                 onClick = { onAnalyzePhoto(imageFile) },
                 enabled = !isProcessing,
@@ -264,23 +305,30 @@ fun ImagePreviewScreen(
             }
         }
     }
+
+    currentOrderRequest?.let { orderRequest ->
+        if (showDebugDialog) {
+            DebugIngredientsDialog(
+                orderRequest = orderRequest,
+                onDismiss = { showDebugDialog = false }
+            )
+        }
+    }
 }
+
 
 @Composable
 fun parseMarkdownText(text: String): AnnotatedString {
     return buildAnnotatedString {
-        // Split text line by line to handle headings and bold text
         val lines = text.split("\n")
         lines.forEach { line ->
             when {
-                // Handle h1 (# heading)
                 line.trimStart().startsWith("# ") -> {
                     pushStyle(SpanStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold))
                     append(line.substringAfter("# "))
                     pop()
                     append("\n")
                 }
-                // Handle h2 (## heading)
                 line.trimStart().startsWith("## ") -> {
                     pushStyle(SpanStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold))
                     append(line.substringAfter("## "))
@@ -288,7 +336,6 @@ fun parseMarkdownText(text: String): AnnotatedString {
                     append("\n")
                 }
                 else -> {
-                    // Process bold markers (**)
                     val segments = line.split("**")
                     var isBold = false
                     segments.forEach { segment ->
@@ -310,12 +357,12 @@ fun parseMarkdownText(text: String): AnnotatedString {
 
 private fun loadAndRotateImage(imageFile: File): Bitmap? {
     return try {
-        // Read EXIF orientation
         val exif = ExifInterface(imageFile.absolutePath)
         val orientation = exif.getAttributeInt(
             ExifInterface.TAG_ORIENTATION,
             ExifInterface.ORIENTATION_UNDEFINED
         )
+
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(imageFile.absolutePath, options)
         val targetHeight = 1920
@@ -324,6 +371,7 @@ private fun loadAndRotateImage(imageFile: File): Bitmap? {
             inJustDecodeBounds = false
             inSampleSize = if (sampleSize > 1) sampleSize else 1
         }
+
         val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath, options)
         val matrix = Matrix()
         when (orientation) {
@@ -331,6 +379,7 @@ private fun loadAndRotateImage(imageFile: File): Bitmap? {
             ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
             ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
         }
+
         if (matrix.isIdentity) {
             bitmap
         } else {
